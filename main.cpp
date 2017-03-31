@@ -5,115 +5,145 @@
 #include <sys/socket.h>
 #include <arpa/inet.h>
 #include <unistd.h>
+#include <QDebug>
+#include <variables.h>
+#include <html.h>
 
 using namespace std;
 
-struct ClientData {
-    sockaddr_in addr;
+struct Task {
+    sockaddr_in client_addr;
     int clientDescriptor;
     int clientSize;
+    int dataSize;
+    char * data;
+    char * externData;
 };
 
-pthread_mutex_t mutex;
-int pointer = 0;
-ClientData* clients[128] = {0};
-int actives[128] = {0};
+struct TaskTurnElement {
+    Task * task;
+    TaskTurnElement * nextTaskElement;
+    TaskTurnElement() {
+        task = NULL;
+        nextTaskElement = NULL;
+    }
+};
 
-pthread_t threads[4];
+struct TaskTurn {
+    //workerThread
+    TaskTurnElement * firstTaskTurnElement;
+    //workerThread
+    TaskTurnElement * lastMakedTurnElement;
 
+    //mainThread
+    TaskTurnElement * lastTaskTurnElement;
 
-int findActives() {
-    int tg = 0;
-    bool fnd = 0;
-    while(!fnd) {
-        while(clients[tg] == NULL && actives[tg] == 0) {
-            tg++;
-            if(tg >= 128) {
-                tg = 0;
+    //mainThread
+    TaskTurn() {
+        firstTaskTurnElement = new TaskTurnElement();
+        lastTaskTurnElement = firstTaskTurnElement;
+        lastMakedTurnElement = NULL;
+    }
+
+    //mainThread
+    void pushLast(Task * task){
+        qDebug() << "pushLast start";
+        TaskTurnElement * newTaskTurnElement = new TaskTurnElement();
+        newTaskTurnElement->nextTaskElement = NULL;
+        newTaskTurnElement->task = task;
+        lastTaskTurnElement->nextTaskElement = newTaskTurnElement;
+        lastTaskTurnElement = newTaskTurnElement;
+        qDebug() << "pushLast end";
+    }
+
+    //workerThread
+    Task * popFirst(){
+        if (lastMakedTurnElement != lastTaskTurnElement) {
+            qDebug() << "popFirst.if start";
+            Task * result = firstTaskTurnElement->task;
+            if (lastMakedTurnElement == firstTaskTurnElement) {
+                result = 0;
             }
+            else {
+               lastMakedTurnElement = firstTaskTurnElement;
+            }
+            if(firstTaskTurnElement->nextTaskElement != NULL) {
+                firstTaskTurnElement = firstTaskTurnElement->nextTaskElement;
+            }
+                    qDebug() << "popFirst.if end";
+            return result;
         }
-        pthread_mutex_lock(&mutex);
-        if(actives[tg] == 0) {
-            actives[tg] = 1;
-            fnd = 1;
-        }
-        pthread_mutex_unlock(&mutex);
+        return NULL;
     }
-    return tg;
-}
 
-void workerLive() {
+};
+
+
+int workers_count = 0;
+int current_worker = 0;
+
+TaskTurn * taskTurns;
+pthread_t threads[8];
+
+//Запускает цикл обработки выполняется в потоке воркера
+void workerLive(TaskTurn * taskTurn) {
+    Task * task = NULL;
     while(true) {
-        int i = findActives();
-        ClientData*clientData = clients[i];
-        char buf[] =
-                "HTTP/1.1 200 OK\nDate: Wed, 11 Feb 2009 11:20:59 GMT\n\
-     Server: Apache\n\
-     Content-Language: ru\n\
-     Content-Type: text/html; charset=utf-8\n\
-     \n\
-                <style type=\"text/css\">\
-                 .block1 {\
-                    width: parent; \
-                    background: #fc0;\
-                    padding: 5px;\
-                    border: solid 1px black;\
-                    top: 10px;\
-                    left: -70px;\
-                }\
-                .block2 {\
-                    width: parent;\
-                    background: #00a;\
-                    padding: 5px;\
-                    border: solid 1px black;\
-                    top: 100px;\
-                    left: -70px;\
-                }\
-                </style>\
-                <div class=\"block1\"><h1 align=\"center\">Server are working!</h1></div>\
-                <div class=\"block2\"><h3 id=\"target\">Good!</h3></div>";
-        send(clientData->clientDescriptor, buf, sizeof(buf), 0);
-        close(clientData->clientDescriptor);
-        free(clientData);
-        clients[i] = 0;
-        actives[i] = 0;
-
-    }
-}
-
-void* runWorker(void*) {
-    workerLive();
-}
-
-void initWorkers(int count) {
-    while(count != 0) {
-        pthread_create(threads, NULL, runWorker, NULL);
-        count--;
-    }
-}
-
-
-
-void addClient(ClientData* clientData) {
-    while(clients[pointer] == NULL) {
-        pointer++;
-        if (pointer >= 128) {
-            pointer = 0;
+        while(task == NULL) {
+            task = taskTurn->popFirst();
         }
+        char buf[8192];
+        int i = recv(task->clientDescriptor, buf, sizeof buf, 0);
+        RequestData requestData(buf, i);
+
+        ResponseData responseData;
+        HTML data;
+        responseData.toBytes(requestData.uri, &data);
+        send(task->clientDescriptor, data.data, data.len, 0);
+        close(task->clientDescriptor);
+        free(task);
+        task = NULL;
     }
-    clients[pointer] = clientData;
-    actives[pointer] = 0;
 }
 
 
+//Выполняется в потоке воркера
+//
 
+void * runWorker(void * taskTurn) {
+    workerLive((TaskTurn*)taskTurn);
+}
 
+//Обьявляет воркеров и запускаетих
+//count - количество воркеров
+void initWorkers(int count) {
+    workers_count = count;
+    taskTurns = new TaskTurn[count];
+
+    while(count != 0) {
+        pthread_create(threads, NULL, runWorker, taskTurns + --count);
+    }
+}
+
+//main Thread
+void addTask(Task* task) {
+    qDebug() << "add task runned";
+    taskTurns[current_worker].pushLast(task);
+    qDebug() << "task was pushed";
+    qDebug() << "in thread turn num: " << current_worker;
+    current_worker = (current_worker + 1) % workers_count;
+    qDebug() << "new current worker: " << current_worker;
+}
 
 sockaddr_in serverAddr;
-void mainThread() {
+
+//mainThread
+void mainThreadLoop(const unsigned short port) {
+
+    qDebug() << "mainThreadLoop runed";
 
     serverAddr.sin_family = PF_INET;
-    serverAddr.sin_port = htons(8080);
+    serverAddr.sin_port = htons(port);
     serverAddr.sin_addr.s_addr = htonl(INADDR_ANY);
 
 
@@ -122,25 +152,30 @@ void mainThread() {
     listen(mySocket, 256);
     unsigned int clientSize = sizeof(sockaddr_in);
 
-    printf("server started");
     while (true) {
-        ClientData * clientData = (ClientData *)malloc(sizeof(ClientData));
         sockaddr_in clientAddr;
+        qDebug() << "listening port: " << port;
         int clientDescriptor = accept(mySocket, (sockaddr*)&clientAddr, &clientSize);
-        clientData->addr = clientAddr;
-        clientData->clientSize = clientSize;
-        clientData->clientDescriptor = clientDescriptor;
-        addClient(clientData);
+        qDebug() << "new client";
+        Task * newTask = new Task();
+        newTask->clientDescriptor = clientDescriptor;
+        newTask->client_addr = clientAddr;
+        newTask->clientSize = clientSize;
+        addTask(newTask);
     }
 
     close(mySocket);
     return;
+
 }
 
+//mainThread
 int main(int argc, char *argv[])
 {
-    pthread_mutex_init(&mutex, NULL);
+
+    getDirectory("/home/dmitry");
+    qDebug() << "main functon runned";
     initWorkers(4);
-    mainThread();
+    mainThreadLoop(3078);
     return 0;
 }
