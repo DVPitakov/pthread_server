@@ -96,10 +96,9 @@ void workerLive(TaskTurn * taskTurn) {
         int i = recv(task->clientDescriptor, buf, sizeof buf, 0);
         RequestData requestData(buf, i);
 
-        ResponseData responseData;
-        HTML data;
-        responseData.toBytes(requestData.uri, &data);
-        send(task->clientDescriptor, data.data, data.len, 0);
+        ResponseData responseData(&requestData);
+        HTML * data = responseData.getHTTPResponse();
+        send(task->clientDescriptor, data->data, data->len, 0);
         close(task->clientDescriptor);
         free(task);
         task = NULL;
@@ -172,10 +171,8 @@ void mainThreadLoop(const unsigned short port) {
 //mainThread
 int main(int argc, char *argv[])
 {
-
-    getDirectory("/home/dmitry");
     qDebug() << "main functon runned";
     initWorkers(4);
-    mainThreadLoop(3078);
+    mainThreadLoop(3130);
     return 0;
 }
