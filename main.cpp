@@ -59,7 +59,6 @@ struct TaskTurn {
     //workerThread
     Task * popFirst(){
         if (lastMakedTurnElement != lastTaskTurnElement) {
-            qDebug() << "popFirst.if start";
             Task * result = firstTaskTurnElement->task;
             if (lastMakedTurnElement == firstTaskTurnElement) {
                 result = 0;
@@ -70,7 +69,6 @@ struct TaskTurn {
             if(firstTaskTurnElement->nextTaskElement != NULL) {
                 firstTaskTurnElement = firstTaskTurnElement->nextTaskElement;
             }
-                    qDebug() << "popFirst.if end";
             return result;
         }
         return NULL;
@@ -172,7 +170,7 @@ void mainThreadLoop(const unsigned short port) {
 int main(int argc, char *argv[])
 {
     qDebug() << "main functon runned";
-    initWorkers(4);
-    mainThreadLoop(3130);
+    initWorkers(1);
+    mainThreadLoop(3156);
     return 0;
 }

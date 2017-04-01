@@ -49,7 +49,7 @@ struct HTML {
 };
 
 char * http_date(tm * time) {
-    char * result = (char*)malloc(40);
+    char * result = (char*)malloc(240);
     const char day_name[][4] =  {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
     const char month_name[][4] = {"Jan", "Feb", "Mar", "Apr",
                                  "May", "Jun", "Jul", "Aug",
@@ -64,7 +64,6 @@ char * http_date(tm * time) {
 struct URI {
     char * path;
     char * query;
-    char * fragment;
     char * data;
     int dataLen;
     URI(char * uriString) {
@@ -81,44 +80,33 @@ struct URI {
         char * queryBegin = NULL;
         char * queryEnd = strEnd;
 
-        char * fragmentBegin = NULL;
-        char * fragmentEnd = strEnd;
-
         pathBegin = strchr(uriString, '/');
         if (pathBegin != NULL) {
             queryBegin = strchr(uriString, '?');
             if(queryBegin != NULL) {
                 pathEnd = queryBegin;
             }
-            fragmentBegin = strchr(uriString, '#');
-            if(queryBegin == NULL && fragmentBegin != NULL) {
-                pathEnd = fragmentBegin;
-            }
-
-            if(queryBegin != NULL && fragmentBegin != NULL) {
-                queryEnd = fragmentBegin;
-            }
-
 
             dataLen = len + 15;
             data = (char*)malloc(dataLen);
-
-            memcpy(data, pathBegin, pathEnd - pathBegin);
-            path[pathEnd - pathBegin] = '\0';
             path = data;
+            int pathStrLen = 0;
+            memcpy(data, pathBegin, pathEnd - pathBegin);
+            if (*(pathEnd - 1) == '/') {
+               char ind[] = "index.html";
+               pathStrLen = sizeof(ind) - 1 + (pathEnd - pathBegin);
+               memcpy(path + (pathEnd - pathBegin), ind, sizeof(ind));
+            }
+            else {
+                pathStrLen = (pathEnd - pathBegin);
+            }
+            path[pathStrLen] = '\0';
 
             if(queryBegin != NULL) {
+                query = data + pathStrLen;
                 memcpy(query, queryBegin, queryEnd - queryBegin);
                 path[queryEnd - queryBegin] = '\0';
-                query = data;
             }
-
-            if(fragmentBegin != NULL) {
-                memcpy(fragment, fragmentBegin, fragmentEnd - fragmentBegin);
-                path[fragmentEnd - fragmentBegin] = '\0';
-                fragment = data;
-            }
-
             error = false;
         }
         else {
@@ -138,17 +126,10 @@ struct URI {
         else {
             this->query = NULL;
         }
-
-        if (otherURI.fragment != NULL) {
-             this->fragment = this->data + (otherURI.data - otherURI.fragment) ;
-        }
-        else {
-            this->fragment = NULL;
-        }
     }
 
     ~URI() {
-        free(data);
+       // free(data);
     }
 };
 
@@ -209,7 +190,7 @@ struct RequestData {
 
     }
     ~RequestData() {
-        free(uri);
+        //free(uri);
     }
 };
 
