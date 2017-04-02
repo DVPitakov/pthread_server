@@ -11,6 +11,9 @@
 
 using namespace std;
 
+pthread_mutex_t myMutex;
+pthread_cond_t emptyQueue;
+
 struct Task {
     sockaddr_in client_addr;
     int clientDescriptor;
@@ -87,6 +90,7 @@ pthread_t threads[8];
 void workerLive(TaskTurn * taskTurn) {
     Task * task = NULL;
     while(true) {
+        task = taskTurn->popFirst();
         while(task == NULL) {
             task = taskTurn->popFirst();
         }
@@ -103,16 +107,10 @@ void workerLive(TaskTurn * taskTurn) {
     }
 }
 
-
-//Выполняется в потоке воркера
-//
-
 void * runWorker(void * taskTurn) {
     workerLive((TaskTurn*)taskTurn);
 }
 
-//Обьявляет воркеров и запускаетих
-//count - количество воркеров
 void initWorkers(int count) {
     workers_count = count;
     taskTurns = new TaskTurn[count];
@@ -122,22 +120,18 @@ void initWorkers(int count) {
     }
 }
 
-//main Thread
 void addTask(Task* task) {
-    qDebug() << "add task runned";
     taskTurns[current_worker].pushLast(task);
-    qDebug() << "task was pushed";
-    qDebug() << "in thread turn num: " << current_worker;
     current_worker = (current_worker + 1) % workers_count;
     qDebug() << "new current worker: " << current_worker;
 }
 
 sockaddr_in serverAddr;
 
-//mainThread
 void mainThreadLoop(const unsigned short port) {
 
     qDebug() << "mainThreadLoop runed";
+    qDebug() << "port: " << port;
 
     serverAddr.sin_family = PF_INET;
     serverAddr.sin_port = htons(port);
@@ -151,9 +145,7 @@ void mainThreadLoop(const unsigned short port) {
 
     while (true) {
         sockaddr_in clientAddr;
-        qDebug() << "listening port: " << port;
         int clientDescriptor = accept(mySocket, (sockaddr*)&clientAddr, &clientSize);
-        qDebug() << "new client";
         Task * newTask = new Task();
         newTask->clientDescriptor = clientDescriptor;
         newTask->client_addr = clientAddr;
@@ -170,7 +162,9 @@ void mainThreadLoop(const unsigned short port) {
 int main(int argc, char *argv[])
 {
     qDebug() << "main functon runned";
-    initWorkers(1);
-    mainThreadLoop(3156);
+    initWorkers(8);
+    pthread_mutex_init(&myMutex, NULL);
+    mutexs_init();
+    mainThreadLoop(3149);
     return 0;
 }
