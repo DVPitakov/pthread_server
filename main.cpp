@@ -8,10 +8,11 @@
 #include <QDebug>
 #include <variables.h>
 #include <html.h>
+#include <semaphore.h>
 
 using namespace std;
 
-pthread_mutex_t myMutex;
+
 pthread_cond_t emptyQueue;
 
 struct Task {
@@ -26,55 +27,49 @@ struct Task {
 struct TaskTurnElement {
     Task * task;
     TaskTurnElement * nextTaskElement;
-    TaskTurnElement() {
-        task = NULL;
+    TaskTurnElement(Task * task) {
+        this->task = task;
         nextTaskElement = NULL;
     }
 };
 
 struct TaskTurn {
-    //workerThread
     TaskTurnElement * firstTaskTurnElement;
-    //workerThread
-    TaskTurnElement * lastMakedTurnElement;
-
-    //mainThread
     TaskTurnElement * lastTaskTurnElement;
+    sem_t * pmutex;
 
     //mainThread
     TaskTurn() {
-        firstTaskTurnElement = new TaskTurnElement();
-        lastTaskTurnElement = firstTaskTurnElement;
-        lastMakedTurnElement = NULL;
+        firstTaskTurnElement = NULL;
+        lastTaskTurnElement = NULL;
     }
 
     //mainThread
     void pushLast(Task * task){
-        qDebug() << "pushLast start";
-        TaskTurnElement * newTaskTurnElement = new TaskTurnElement();
-        newTaskTurnElement->nextTaskElement = NULL;
-        newTaskTurnElement->task = task;
-        lastTaskTurnElement->nextTaskElement = newTaskTurnElement;
-        lastTaskTurnElement = newTaskTurnElement;
-        qDebug() << "pushLast end";
+        TaskTurnElement * newTaskTurnElement = new TaskTurnElement(task);
+        if(lastTaskTurnElement == NULL) {
+            lastTaskTurnElement = newTaskTurnElement;
+        }
+        else {
+            lastTaskTurnElement->nextTaskElement = newTaskTurnElement;
+            lastTaskTurnElement = lastTaskTurnElement->nextTaskElement;
+        }
+
+        if(firstTaskTurnElement == NULL) {
+            firstTaskTurnElement = lastTaskTurnElement;
+        }
+
+        sem_post(pmutex);
+
     }
 
     //workerThread
     Task * popFirst(){
-        if (lastMakedTurnElement != lastTaskTurnElement) {
-            Task * result = firstTaskTurnElement->task;
-            if (lastMakedTurnElement == firstTaskTurnElement) {
-                result = 0;
-            }
-            else {
-               lastMakedTurnElement = firstTaskTurnElement;
-            }
-            if(firstTaskTurnElement->nextTaskElement != NULL) {
-                firstTaskTurnElement = firstTaskTurnElement->nextTaskElement;
-            }
-            return result;
-        }
-        return NULL;
+        sem_wait(pmutex);
+        Task * result = firstTaskTurnElement->task;
+        firstTaskTurnElement = firstTaskTurnElement->nextTaskElement;
+        return result;
+
     }
 
 };
@@ -84,7 +79,8 @@ int workers_count = 0;
 int current_worker = 0;
 
 TaskTurn * taskTurns;
-pthread_t threads[8];
+pthread_t threads[64];
+sem_t myMutexArr[64];
 
 //Запускает цикл обработки выполняется в потоке воркера
 void workerLive(TaskTurn * taskTurn) {
@@ -92,6 +88,7 @@ void workerLive(TaskTurn * taskTurn) {
     while(true) {
         task = taskTurn->popFirst();
         while(task == NULL) {
+            qDebug() << "LOCK" << taskTurn->pmutex;
             task = taskTurn->popFirst();
         }
         char buf[8192] = {0};
@@ -118,6 +115,10 @@ void * runWorker(void * taskTurn) {
 void initWorkers(int count) {
     workers_count = count;
     taskTurns = new TaskTurn[count];
+    for(int i = 0; i < count; i++) {
+        sem_init(myMutexArr + i, 0, 0);
+        taskTurns[i].pmutex = myMutexArr + i;
+    }
 
     while(count != 0) {
         pthread_create(threads, NULL, runWorker, taskTurns + --count);
@@ -166,9 +167,8 @@ void mainThreadLoop(const unsigned short port) {
 int main(int argc, char *argv[])
 {
     qDebug() << "main functon runned";
-    initWorkers(2);
-    pthread_mutex_init(&myMutex, NULL);
+    initWorkers(8);
     mutexs_init();
-    mainThreadLoop(3169);
+    mainThreadLoop(3199);
     return 0;
 }
