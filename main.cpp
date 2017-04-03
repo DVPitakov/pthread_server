@@ -3,6 +3,8 @@
 
 #include <sys/types.h>
 #include <sys/socket.h>
+#include <sys/epoll.h>
+
 #include <arpa/inet.h>
 #include <unistd.h>
 #include <QDebug>
@@ -10,18 +12,84 @@
 #include <html.h>
 #include <semaphore.h>
 
+
 using namespace std;
 
 
 pthread_cond_t emptyQueue;
 
-struct Task {
-    sockaddr_in client_addr;
+int MAX_REQUEST_LEN = 4096;
+class Task {
+private:
     int clientDescriptor;
-    int clientSize;
-    int dataSize;
-    char * data;
-    char * externData;
+    int usedLen;
+    int freeLen;
+    char * requestData;
+    char * freePointer;
+
+public:
+    Task(int clientDescriptor) {
+        this->clientDescriptor = clientDescriptor;
+        requestData = (char*)malloc(MAX_REQUEST_LEN);
+        usedLen = 0;
+        freeLen = MAX_REQUEST_LEN;
+        freePointer = requestData;
+
+    }
+
+    bool isReady() {
+        if (usedLen >= 4
+                && (*(freePointer - 1)) == '\n'
+                && (*(freePointer - 2)) == '\r'
+                && (*(freePointer - 3)) == '\n'
+                && (*(freePointer - 4)) == '\r') {
+            return true;
+        }
+        else {
+            return false;
+        }
+
+    }
+
+    int getClientDescriptor() {
+        return clientDescriptor;
+
+    }
+
+    char * getRequestData() {
+        return requestData;
+
+    }
+
+    char * getFreePointer() {
+        return freePointer;
+
+    }
+
+    void move(int len) {
+        freeLen -= len;
+        usedLen += len;
+        freePointer += len;
+
+    }
+
+    int getFreeLen() {
+        return freeLen;
+
+    }
+
+    void clear() {
+        freePointer = requestData;
+        usedLen = 0;
+        freeLen = MAX_REQUEST_LEN;
+
+    }
+
+    ~Task() {
+        free(requestData);
+
+    }
+
 };
 
 struct TaskTurnElement {
@@ -30,45 +98,36 @@ struct TaskTurnElement {
     TaskTurnElement(Task * task) {
         this->task = task;
         nextTaskElement = NULL;
+
     }
 };
 
-struct TaskTurn {
-    TaskTurnElement * firstTaskTurnElement;
-    TaskTurnElement * lastTaskTurnElement;
-    sem_t * pmutex;
+int EPOLL_QUEUE_LEN = 1024;
+int MAX_EPOLL_EVENTS_PER_RUN = 1;
+int RUN_TIMEOUT = 10;
+class TaskTurn {
+private:
+    int epfd;
 
-    //mainThread
+public:
     TaskTurn() {
-        firstTaskTurnElement = NULL;
-        lastTaskTurnElement = NULL;
+        epfd = epoll_create(EPOLL_QUEUE_LEN);
     }
 
-    //mainThread
-    void pushLast(Task * task){
-        TaskTurnElement * newTaskTurnElement = new TaskTurnElement(task);
-        if(lastTaskTurnElement == NULL) {
-            lastTaskTurnElement = newTaskTurnElement;
-        }
-        else {
-            lastTaskTurnElement->nextTaskElement = newTaskTurnElement;
-            lastTaskTurnElement = lastTaskTurnElement->nextTaskElement;
-        }
-
-        if(firstTaskTurnElement == NULL) {
-            firstTaskTurnElement = lastTaskTurnElement;
-        }
-
-        sem_post(pmutex);
+    int getEpfd() {
+        return epfd;
 
     }
 
-    //workerThread
-    Task * popFirst(){
-        sem_wait(pmutex);
-        Task * result = firstTaskTurnElement->task;
-        firstTaskTurnElement = firstTaskTurnElement->nextTaskElement;
-        return result;
+    void push(Task * task){
+        epoll_event ev;
+        ev.events = EPOLLIN | EPOLLPRI | EPOLLERR | EPOLLHUP;
+        ev.data.ptr = (void*)task;
+        int res = epoll_ctl(epfd, EPOLL_CTL_ADD, task->getClientDescriptor(), &ev);
+
+    }
+
+    ~TaskTurn() {
 
     }
 
@@ -82,29 +141,35 @@ TaskTurn * taskTurns;
 pthread_t threads[64];
 sem_t myMutexArr[64];
 
-//Запускает цикл обработки выполняется в потоке воркера
-void workerLive(TaskTurn * taskTurn) {
-    Task * task = NULL;
-    while(true) {
-        task = taskTurn->popFirst();
-        while(task == NULL) {
-            qDebug() << "LOCK" << taskTurn->pmutex;
-            task = taskTurn->popFirst();
-        }
-        char buf[8192] = {0};
-        int i = recv(task->clientDescriptor, buf, (sizeof buf) - 4, 0);
+void addTask(Task* task) {
+    taskTurns[current_worker].push(task);
+    current_worker = (current_worker + 1) % workers_count;
+    qDebug() << "new current worker: " << current_worker;
 
-        RequestData requestData(buf, i);
-        if (requestData.isValid) {
-            ResponseData responseData(&requestData);
-            send(task->clientDescriptor, responseData.header, responseData.headerLen, 0);
-            if(responseData.dataLen > 0) {
-                send(task->clientDescriptor, responseData.data, responseData.dataLen, 0);
-            }
+}
+
+void workerLive(TaskTurn * taskTurn) {
+    Task * curTask;
+    epoll_event events[EPOLL_QUEUE_LEN];
+    int nfds;
+    while(true) {
+         nfds = epoll_wait(taskTurn->getEpfd(), events, MAX_EPOLL_EVENTS_PER_RUN, RUN_TIMEOUT);
+         for (int i = 0; i < nfds; i++) {
+             curTask = (Task*)(events[i].data.ptr);
+             int readedBytesCount = recv(curTask->getClientDescriptor(), curTask->getRequestData(), curTask->getFreeLen(), 0);
+             curTask->move(readedBytesCount );
+             if (curTask->isReady()) {
+                 RequestData requestData(curTask->getRequestData());
+                 if (requestData.isValid) {
+                     ResponseData responseData(&requestData);
+                     send(curTask->getClientDescriptor(), responseData.header, responseData.headerLen, 0);
+                     if(responseData.dataLen > 0) {
+                         send(curTask->getClientDescriptor(), responseData.data, responseData.dataLen, 0);
+                     }
+                 }
+                 close(curTask->getClientDescriptor());
+             }
         }
-        close(task->clientDescriptor);
-        free(task);
-        task = NULL;
     }
 }
 
@@ -115,20 +180,9 @@ void * runWorker(void * taskTurn) {
 void initWorkers(int count) {
     workers_count = count;
     taskTurns = new TaskTurn[count];
-    for(int i = 0; i < count; i++) {
-        sem_init(myMutexArr + i, 0, 0);
-        taskTurns[i].pmutex = myMutexArr + i;
-    }
-
     while(count != 0) {
         pthread_create(threads, NULL, runWorker, taskTurns + --count);
     }
-}
-
-void addTask(Task* task) {
-    taskTurns[current_worker].pushLast(task);
-    current_worker = (current_worker + 1) % workers_count;
-    qDebug() << "new current worker: " << current_worker;
 }
 
 sockaddr_in serverAddr;
@@ -151,10 +205,7 @@ void mainThreadLoop(const unsigned short port) {
     while (true) {
         sockaddr_in clientAddr;
         int clientDescriptor = accept(mySocket, (sockaddr*)&clientAddr, &clientSize);
-        Task * newTask = new Task();
-        newTask->clientDescriptor = clientDescriptor;
-        newTask->client_addr = clientAddr;
-        newTask->clientSize = clientSize;
+        Task * newTask = new Task(clientDescriptor);
         addTask(newTask);
     }
 
@@ -167,8 +218,7 @@ void mainThreadLoop(const unsigned short port) {
 int main(int argc, char *argv[])
 {
     qDebug() << "main functon runned";
-    initWorkers(8);
-    mutexs_init();
-    mainThreadLoop(3199);
+    initWorkers(6);
+    mainThreadLoop(3211);
     return 0;
 }

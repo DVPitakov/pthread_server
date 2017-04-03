@@ -199,7 +199,6 @@ struct RequestData {
     char * protocol;
     URI * uri;
     char * method;
-    long httpRequestLen;
     char ** headers;
     bool isValid;
 
@@ -215,7 +214,7 @@ struct RequestData {
 
     }
 
-    RequestData(char * httpRequest, long httpRequestLen) {
+    RequestData(char * httpRequest) {
         //headers = (char**)malloc(32);
         isValid = true;
         uri = NULL;
@@ -224,13 +223,11 @@ struct RequestData {
         uriString = NULL;
 
         this->httpRequest = httpRequest;
-        this->httpRequestLen = httpRequestLen;
         char * oldPos = httpRequest;
         char * newPos = httpRequest;
         newPos = strchr(newPos, ' ');
         if(newPos == NULL) {
             isValid = false;
-            qDebug() << "IS FALSE 1";
             return;
         }
         saveStr(&method, oldPos, newPos);
@@ -240,7 +237,6 @@ struct RequestData {
         newPos = strchr(newPos, ' ');
         if(newPos == NULL) {
             isValid = false;
-            qDebug() << "IS FALSE 2";
             return;
         }
         saveStr(&uriString, oldPos, newPos);
@@ -253,9 +249,8 @@ struct RequestData {
         }
         saveStr(&protocol, oldPos, newPos);
 
-        qDebug() << "URI string: " << uriString;
         uri = new URI(uriString);
-
+        /*
         if(newPos >= 0) {
             newPos++;
             oldPos = newPos;
@@ -263,15 +258,13 @@ struct RequestData {
         }
 
         int i = 0;
-        /*while (i < 32 && newPos != NULL) {
+        while (i < 32 && newPos != NULL) {
             saveStr(headers + i, oldPos, newPos);
             newPos++;
             oldPos = newPos;
             newPos = strchr(newPos, '\n');
             i++;
         }*/
-
-
 
     }
     ~RequestData() {
