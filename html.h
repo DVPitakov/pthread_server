@@ -53,6 +53,7 @@ short ctoi(char ch) {
     else {
         return -1;
     }
+
 }
 
 short oxToChar(char * oxCharCode) {
@@ -66,14 +67,11 @@ short oxToChar(char * oxCharCode) {
         result = -1;
     }
     return result;
+
 }
 
 short utf_8(char * dst, char * src) {
-
-    qDebug() << "before: " << src;
     char * srcPointer = strchr(src, '%');
-    char * debugDst = dst;
-
     while(srcPointer != NULL) {
         memcpy(dst, src, srcPointer - src);
         dst += srcPointer - src;
@@ -95,8 +93,8 @@ short utf_8(char * dst, char * src) {
     }
 
     memcpy(dst, src, strlen(src) + 1);
-    qDebug() << "After: " << debugDst;
     return 0;
+
 }
 
 char * http_date(tm * time) {
@@ -189,7 +187,7 @@ struct URI {
     }
 
     ~URI() {
-       // free(data);
+       free(data);
     }
 };
 
@@ -267,8 +265,13 @@ struct RequestData {
         }*/
 
     }
+
     ~RequestData() {
-        //free(uri);
+        if (uri != NULL) free(uri);
+        if (method != NULL) free(method);
+        if (uriString != NULL) free(uriString);
+        if (protocol != NULL) free(protocol);
+
     }
 };
 

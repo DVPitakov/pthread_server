@@ -92,16 +92,6 @@ public:
 
 };
 
-struct TaskTurnElement {
-    Task * task;
-    TaskTurnElement * nextTaskElement;
-    TaskTurnElement(Task * task) {
-        this->task = task;
-        nextTaskElement = NULL;
-
-    }
-};
-
 int EPOLL_QUEUE_LEN = 1024;
 int MAX_EPOLL_EVENTS_PER_RUN = 1;
 int RUN_TIMEOUT = 10;
@@ -136,6 +126,7 @@ public:
 
 int workers_count = 0;
 int current_worker = 0;
+sockaddr_in serverAddr;
 
 TaskTurn * taskTurns;
 pthread_t threads[64];
@@ -168,9 +159,11 @@ void workerLive(TaskTurn * taskTurn) {
                      }
                  }
                  close(curTask->getClientDescriptor());
+                 delete curTask;
              }
         }
     }
+
 }
 
 void * runWorker(void * taskTurn) {
@@ -184,8 +177,6 @@ void initWorkers(int count) {
         pthread_create(threads, NULL, runWorker, taskTurns + --count);
     }
 }
-
-sockaddr_in serverAddr;
 
 void mainThreadLoop(const unsigned short port) {
 
@@ -219,6 +210,7 @@ int main(int argc, char *argv[])
 {
     qDebug() << "main functon runned";
     initWorkers(6);
-    mainThreadLoop(3211);
+    mainThreadLoop(3212);
     return 0;
+
 }
