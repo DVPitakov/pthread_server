@@ -99,18 +99,6 @@ short utf_8(char * dst, char * src) {
     return 0;
 }
 
-struct HTML {
-    HTML() {
-
-    }
-    ~HTML() {
-
-    }
-
-    char * data;
-    long len;
-};
-
 char * http_date(tm * time) {
     char * result = (char*)malloc(240);
     const char day_name[][4] =  {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
@@ -213,6 +201,7 @@ struct RequestData {
     char * method;
     long httpRequestLen;
     char ** headers;
+    bool isValid;
 
     void saveStr(char ** saveWhere, char * begin, char * end) {
         *saveWhere = (char*)malloc(end - begin + 20);
@@ -227,23 +216,41 @@ struct RequestData {
     }
 
     RequestData(char * httpRequest, long httpRequestLen) {
-        headers = (char**)malloc(32);
+        //headers = (char**)malloc(32);
+        isValid = true;
+        uri = NULL;
+        protocol = NULL;
+        method = NULL;
+        uriString = NULL;
 
         this->httpRequest = httpRequest;
         this->httpRequestLen = httpRequestLen;
         char * oldPos = httpRequest;
         char * newPos = httpRequest;
         newPos = strchr(newPos, ' ');
+        if(newPos == NULL) {
+            isValid = false;
+            qDebug() << "IS FALSE 1";
+            return;
+        }
         saveStr(&method, oldPos, newPos);
 
         newPos++;
         oldPos = newPos;
         newPos = strchr(newPos, ' ');
+        if(newPos == NULL) {
+            isValid = false;
+            qDebug() << "IS FALSE 2";
+            return;
+        }
         saveStr(&uriString, oldPos, newPos);
 
         newPos++;
         oldPos = newPos;
         newPos = strchr(newPos, ' ');
+        if(newPos == NULL) {
+            newPos = strchr(oldPos, '\r');
+        }
         saveStr(&protocol, oldPos, newPos);
 
         qDebug() << "URI string: " << uriString;
@@ -275,11 +282,17 @@ struct RequestData {
 struct ResponseData {
 
     RequestData * request;
+    char * header;
+    char * data;
+    int headerLen;
+    int dataLen;
 
-    HTML * getHTTPResponse() {
+    void getHTTPResponse() {
 
-
-        HTML * result = new HTML();
+        header = (char*)malloc(4096);
+        data = NULL;
+        headerLen = 0;
+        dataLen = 0;
         char * protocol = PROTOCOL;
         char * status = STATUS_200;
         FileData * resultFile;
@@ -354,15 +367,17 @@ struct ResponseData {
         char * date = http_date(resultFile->date);
 
 
-        if (isHEAD) {
-            result->data = (char*) malloc(2048);
+        data = NULL;
+        dataLen = NULL;
+        if (!isHEAD) {
+            data = resultFile->data;
+            dataLen = resultFile->length;
         }
         else {
-            result->data = (char*) malloc(2048 + resultFile->length);
+            qDebug() << "isHead" << METHOD_HEAD;
         }
 
-
-        int len = sprintf(result->data, "%s %s\r\n%s%s\r\n%s%s\r\n%s%s\r\n%s%s\r\n%s%d\r\n\r\n",
+        headerLen = sprintf(header, "%s %s\r\n%s%s\r\n%s%s\r\n%s%s\r\n%s%s\r\n%s%d\r\n\r\n",
                 protocol, status,
                 HEADER_SERVER, SERVER_NAME,
                 HEADER_DATE, date,
@@ -370,22 +385,16 @@ struct ResponseData {
                 HEADER_CONTENT_TYPE, format,
                 HEADER_CONTENT_LENGTH, resultFile->length);
 
-        if (isHEAD) {
-            result->len = len;
-        }
-        else {
-            memcpy(result->data + len, resultFile->data, resultFile->length);
-            result->len = len + resultFile->length;
-        }
-        return result;
     }
 
     ResponseData(RequestData * request) {
         this->request = request;
-
+        getHTTPResponse();
 
     }
     ~ResponseData(){
+        if (header != NULL) free(header);
+        if (data != NULL) free(data);
 
     }
  };

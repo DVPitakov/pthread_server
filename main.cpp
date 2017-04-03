@@ -94,13 +94,17 @@ void workerLive(TaskTurn * taskTurn) {
         while(task == NULL) {
             task = taskTurn->popFirst();
         }
-        char buf[8192];
-        int i = recv(task->clientDescriptor, buf, sizeof buf, 0);
-        RequestData requestData(buf, i);
+        char buf[8192] = {0};
+        int i = recv(task->clientDescriptor, buf, (sizeof buf) - 4, 0);
 
-        ResponseData responseData(&requestData);
-        HTML * data = responseData.getHTTPResponse();
-        send(task->clientDescriptor, data->data, data->len, 0);
+        RequestData requestData(buf, i);
+        if (requestData.isValid) {
+            ResponseData responseData(&requestData);
+            send(task->clientDescriptor, responseData.header, responseData.headerLen, 0);
+            if(responseData.dataLen > 0) {
+                send(task->clientDescriptor, responseData.data, responseData.dataLen, 0);
+            }
+        }
         close(task->clientDescriptor);
         free(task);
         task = NULL;
@@ -162,9 +166,9 @@ void mainThreadLoop(const unsigned short port) {
 int main(int argc, char *argv[])
 {
     qDebug() << "main functon runned";
-    initWorkers(8);
+    initWorkers(2);
     pthread_mutex_init(&myMutex, NULL);
     mutexs_init();
-    mainThreadLoop(3149);
+    mainThreadLoop(3169);
     return 0;
 }
