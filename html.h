@@ -1,8 +1,9 @@
 #ifndef HTML_H
 #define HTML_H
 
-#include <filemanager.h>
+#include "filemanager.h"
 
+int MAX_RESPONSE_HEADER_LEN              = 4096;
 char MIME_IMAGE_JPEG[]              = "image/jpeg";
 char MIME_IMAGE_JPG[]               = "image/jpeg";
 char MIME_IMAGE_PNG[]               = "image/png";
@@ -21,6 +22,8 @@ char STATUS_404[] = "404 Not Found";
 char STATUS_405[] = "405 Method Not Allowed";
 
 char PROTOCOL[] = "HTTP/1.1";
+char PROTOCOL_10[] = "HTTP/1.0";
+char PROTOCOL_11[] = "HTTP/1.1";
 char SERVER_NAME[] = "PitakovDV";
 
 char HEADER_STATUS_CODE[] = "Status Code: ";
@@ -34,8 +37,12 @@ char METHOD_GET[] = "GET";
 char METHOD_HEAD[] = "HEAD";
 char METHOD_POST[] = "POST";
 
-char root_path[] = "/home/dmitry/http-test-suite/";
-char server_path[] = "/home/dmitry";
+char default_root_path[] = "/home/dmitry/http-test-suite/";
+char * root_path = default_root_path;
+
+char default_server_path[] = ".";
+char * server_path = default_server_path;
+
 char NOT_FOUND[] = "/notFound.html";
 char FORBIDDEN[] = "/forbidden.html";
 char METHOD_NOT_ALLOWED[] = "/MethodNotAllowed.html";
@@ -172,6 +179,7 @@ struct URI {
         }
 
     }
+
     URI(const URI & otherURI) {
         this->dataLen = otherURI.dataLen;
         this->data = (char*)malloc(this->dataLen);
@@ -188,6 +196,7 @@ struct URI {
 
     ~URI() {
        free(data);
+
     }
 };
 
@@ -198,7 +207,9 @@ struct RequestData {
     URI * uri;
     char * method;
     char ** headers;
+    char * headersData;
     bool isValid;
+    bool keepAlive;
 
     void saveStr(char ** saveWhere, char * begin, char * end) {
         *saveWhere = (char*)malloc(end - begin + 20);
@@ -206,14 +217,13 @@ struct RequestData {
             memcpy(*saveWhere, begin, end - begin);
             (*saveWhere)[end - begin] = '\0';
         }
-        else {
-            qDebug() << "can not get memory";
-        }
 
     }
 
     RequestData(char * httpRequest) {
         //headers = (char**)malloc(32);
+        headersData = (char*)malloc(4089);
+        keepAlive = false;
         isValid = true;
         uri = NULL;
         protocol = NULL;
@@ -241,28 +251,42 @@ struct RequestData {
 
         newPos++;
         oldPos = newPos;
-        newPos = strchr(newPos, ' ');
+        newPos = strchr(newPos, '\r');
+        bool end = false;
         if(newPos == NULL) {
-            newPos = strchr(oldPos, '\r');
+            isValid = false;
+            return;
         }
+
         saveStr(&protocol, oldPos, newPos);
-
         uri = new URI(uriString);
-        /*
-        if(newPos >= 0) {
-            newPos++;
-            oldPos = newPos;
-            newPos = strchr(newPos, '\n');
+        if(strcmp(protocol, PROTOCOL_11) == 0) {
+            keepAlive = true;
+        }
+        else {
+            keepAlive = false;
         }
 
-        int i = 0;
-        while (i < 32 && newPos != NULL) {
-            saveStr(headers + i, oldPos, newPos);
+/*        newPos++;
+        oldPos = newPos;
+        newPos = strchr(newPos, '\n');
+
+        while (newPos != NULL) {
+            switch(*newPos) {
+            case('C'): {
+                int len = strspn(HEADER_CONNECTION, oldPos);
+                if ((sizeof HEADER_CONNECTION) - len <= 1) {
+
+                }
+                break;
+            }
+            }
             newPos++;
             oldPos = newPos;
-            newPos = strchr(newPos, '\n');
-            i++;
-        }*/
+            newPos = strchr(newPos, '\r');
+            i += 2;
+        }
+        */
 
     }
 
@@ -271,6 +295,7 @@ struct RequestData {
         if (method != NULL) free(method);
         if (uriString != NULL) free(uriString);
         if (protocol != NULL) free(protocol);
+        //if (headers != NULL) free(headers);
 
     }
 };
@@ -285,7 +310,7 @@ struct ResponseData {
 
     void getHTTPResponse() {
 
-        header = (char*)malloc(4096);
+        header = (char*)malloc(MAX_RESPONSE_HEADER_LEN);
         data = NULL;
         headerLen = 0;
         dataLen = 0;
@@ -293,8 +318,6 @@ struct ResponseData {
         char * status = STATUS_200;
         FileData * resultFile;
         char * path = request->uri->path;
-        qDebug() << request->method;
-        qDebug() << METHOD_HEAD;
         bool isGET  = strcmp(request->method, METHOD_GET) == 0;
         bool isHEAD = strcmp(request->method, METHOD_HEAD) == 0;
         bool isPOST = strcmp(request->method, METHOD_POST) == 0;
@@ -370,14 +393,14 @@ struct ResponseData {
             dataLen = resultFile->length;
         }
         else {
-            qDebug() << "isHead" << METHOD_HEAD;
+
         }
 
         headerLen = sprintf(header, "%s %s\r\n%s%s\r\n%s%s\r\n%s%s\r\n%s%s\r\n%s%d\r\n\r\n",
                 protocol, status,
                 HEADER_SERVER, SERVER_NAME,
                 HEADER_DATE, date,
-                HEADER_CONNECTION, CONNECTION_CLOSE,
+                HEADER_CONNECTION, request->keepAlive?CONNECTION_KEEP_ALIVE:CONNECTION_CLOSE,
                 HEADER_CONTENT_TYPE, format,
                 HEADER_CONTENT_LENGTH, resultFile->length);
 

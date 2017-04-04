@@ -5,52 +5,23 @@
 #include <memory.h>
 #include <malloc.h>
 #include <sys/stat.h>
-#include <QDebug>
 #include <string.h>
 #include <stdlib.h>
-#include <values.h>
 #include <time.h>
-#include <map>
-#include <pthread.h>
-
-using namespace std;
-
 
 struct FileData {
     unsigned long length;
     char * data;
     tm * date;
     bool success;
-    FileData() {
-
-    }
-
-    FileData(const FileData & other) {
-        this->data = other.data;
-        this->date = other.date;
-        this->length = other.length;
-        this->success = other.success;
-    }
-
-    ~FileData() {
-        /*if (data != NULL) {
-            free(data);
-        }
-        if (date != NULL) {
-            free(date);
-        }*/
-    }
 };
-
-static pthread_mutex_t mutex_init;
-static pthread_mutex_t mutex_write;
-
+/*
 void mutexs_init() {
     pthread_mutex_init(&mutex_init, NULL);
     pthread_mutex_init(&mutex_write, NULL);
 }
 
-/*class FileCache {
+class FileCache {
 private:
 
     static FileCache * instance;
@@ -151,7 +122,6 @@ FileData* getFile(char * path, char * dir_path, bool readFile = true) {
 //            }
         }
         else {
-
             resultFile->data = NULL;
             resultFile->date = NULL;
             resultFile->length = 0;
