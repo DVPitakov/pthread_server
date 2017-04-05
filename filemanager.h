@@ -14,6 +14,12 @@ struct FileData {
     char * data;
     tm * date;
     bool success;
+    FileData() {
+
+    }
+    ~FileData() {
+
+    }
 };
 /*
 void mutexs_init() {

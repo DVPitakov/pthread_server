@@ -22,17 +22,45 @@ private:
     int clientDescriptor;
     int usedLen;
     int freeLen;
+    RequestData * pRequest;
+    ResponseData * pResponse;
     char * requestData;
     char * freePointer;
+    bool socketIsClosed;
 
 public:
     Task(int clientDescriptor) {
+        pRequest = NULL;
+        pResponse = NULL;
         this->clientDescriptor = clientDescriptor;
         requestData = (char*)malloc(MAX_REQUEST_LEN + 1);
         requestData[MAX_REQUEST_LEN] = '\0';
         usedLen = 0;
         freeLen = MAX_REQUEST_LEN;
         freePointer = requestData;
+
+    }
+
+    void setSocketIsClosed() {
+        socketIsClosed = true;
+    }
+
+    void reqv() {
+        move(recv(getClientDescriptor(), getRequestData(), getFreeLen(), 0));
+    }
+
+    void openRequest() {
+        if (pRequest == NULL) {
+            pRequest = new RequestData(requestData);
+        }
+        else {
+            pRequest->init(requestData);
+        }
+
+    }
+
+    bool isValidRequest() {
+        return pRequest->isValid;
 
     }
 
@@ -47,6 +75,31 @@ public:
         else {
             return false;
         }
+
+    }
+
+    bool sendData() {
+        int sended;
+        if (pResponse->countHeaderSendedBytes != pResponse->headerLen) {
+            sended = send(clientDescriptor, pResponse->header, pResponse->headerLen, 0);
+            pResponse->countHeaderSendedBytes += sended;
+            if (sended == -1) {
+                return true;
+            }
+        }
+        if (pResponse->dataLen > 0 && pResponse->dataLen != pResponse->countDataSendedBytes) {
+            sended = send(clientDescriptor, pResponse->data, pResponse->dataLen, 0);
+            pResponse->countDataSendedBytes += sended;
+            if (sended == -1) {
+                return true;
+            }
+        }
+        return (((pResponse->dataLen) == (pResponse->countDataSendedBytes))
+                && ((pResponse->countHeaderSendedBytes) == (pResponse->headerLen)));
+    }
+
+    bool isKeepAlive() {
+        return pRequest->keepAlive;
 
     }
 
@@ -78,21 +131,38 @@ public:
 
     }
 
-    void clear() {
-        freePointer = requestData;
-        usedLen = 0;
-        freeLen = MAX_REQUEST_LEN;
+    void makeResponse() {
+        if (pResponse == NULL) {
+              pResponse = new ResponseData(pRequest);
+        }
+        else {
+            pResponse->getHTTPResponse();
+        }
 
     }
 
+    void clear() {
+        pResponse->clear();
+        pRequest->clear();
+        freePointer = requestData;
+        usedLen = 0;
+        freeLen = MAX_REQUEST_LEN;
+    }
+
     ~Task() {
-        free(requestData);
+        if (pRequest != NULL) delete pRequest;
+        pRequest = NULL;
+        delete pResponse;
+         if (pResponse != NULL) pResponse = NULL;
+        if (!socketIsClosed) close(clientDescriptor);
+        if (requestData != NULL) free(requestData);
+        requestData = NULL;
 
     }
 
 };
 
-int EPOLL_QUEUE_LEN = 1024;
+int EPOLL_QUEUE_LEN = 65536;
 int MAX_EPOLL_EVENTS_PER_RUN = 1;
 int RUN_TIMEOUT = 10;
 
@@ -113,7 +183,7 @@ public:
 
     void push(Task * task){
         epoll_event ev;
-        ev.events = EPOLLIN | EPOLLPRI | EPOLLERR | EPOLLHUP;
+        ev.events = EPOLLIN | EPOLLERR | EPOLLHUP;
         ev.data.ptr = (void*)task;
         int res = epoll_ctl(epfd, EPOLL_CTL_ADD, task->getClientDescriptor(), &ev);
 
@@ -145,27 +215,54 @@ void workerLive(TaskTurn * taskTurn) {
     int nfds;
     while(true) {
          nfds = epoll_wait(taskTurn->getEpfd(), events, MAX_EPOLL_EVENTS_PER_RUN, RUN_TIMEOUT);
+
          for (int i = 0; i < nfds; i++) {
              curTask = (Task*)(events[i].data.ptr);
-             int readedBytesCount = recv(curTask->getClientDescriptor(), curTask->getRequestData(), curTask->getFreeLen(), 0);
-             curTask->move(readedBytesCount );
+/*             if ((events[i].events & (EPOLLHUP + EPOLLERR))) {
+                 curTask->setSocketIsClosed();
+                 delete curTask;
+                 continue;
+             }
+             */
+
+             if(events[i].events & EPOLLHUP) {
+
+                 delete curTask;
+                 continue;
+             }
+
+
+             if(events[i].events & EPOLLERR) {
+                 delete curTask;
+                 continue;
+             }
+
+             if (events[i].events & EPOLLIN) {
+                if(!(curTask->isReady())) {
+                    curTask->reqv();
+                }
+             }
              if (curTask->isReady()) {
-                 RequestData requestData(curTask->getRequestData());
-                 if (requestData.isValid) {
-                     ResponseData responseData(&requestData);
-                     send(curTask->getClientDescriptor(), responseData.header, responseData.headerLen, 0);
-                     if(responseData.dataLen > 0) {
-                         send(curTask->getClientDescriptor(), responseData.data, responseData.dataLen, 0);
+                 curTask->openRequest();
+                 if (curTask->isValidRequest()) {
+                     curTask->makeResponse();
+                     if (curTask->sendData()) {
+                         if(curTask->isKeepAlive()) {
+                             curTask->clear();
+                         }
+                         else {
+                             delete curTask;
+                         }
+                     }
+                     else {
+                         std::cout << "ogogo";
                      }
                  }
-                 if (requestData.keepAlive) {
-                     curTask->clear();
-                 }
                  else {
-                    close(curTask->getClientDescriptor());
-                    delete curTask;
+                     delete curTask;
                  }
              }
+
         }
     }
 
@@ -208,7 +305,8 @@ void mainThreadLoop(const unsigned short port) {
     while (true) {
         sockaddr_in clientAddr;
         int clientDescriptor = accept(mySocket, (sockaddr*)&clientAddr, &clientSize);
-        fcntl(clientDescriptor, F_GETFL);
+
+        fcntl(clientDescriptor, F_SETFL);
         Task * newTask = new Task(clientDescriptor);
         addTask(newTask);
     }
@@ -237,7 +335,7 @@ int setSettings(int argc, char **argv) {
         }
         else if (strcmp(argv[i], "-d") == 0) {
             server_path = (char*)malloc(strlen(argv[i + 1]) + 1);
-            strcpy(root_path, argv[i + 1]);
+            strcpy(server_path, argv[i + 1]);
         }
         else if (strcmp(argv[i], "-c") == 0) {
             int res = atoi(argv[i + 1]);

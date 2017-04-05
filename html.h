@@ -220,9 +220,7 @@ struct RequestData {
 
     }
 
-    RequestData(char * httpRequest) {
-        //headers = (char**)malloc(32);
-        headersData = (char*)malloc(4089);
+    void init(char * httpRequest) {
         keepAlive = false;
         isValid = true;
         uri = NULL;
@@ -266,27 +264,26 @@ struct RequestData {
         else {
             keepAlive = false;
         }
+    }
 
-/*        newPos++;
-        oldPos = newPos;
-        newPos = strchr(newPos, '\n');
+    RequestData(char * httpRequest) {
+        headersData = (char*)malloc(4089);
+        init(httpRequest);
 
-        while (newPos != NULL) {
-            switch(*newPos) {
-            case('C'): {
-                int len = strspn(HEADER_CONNECTION, oldPos);
-                if ((sizeof HEADER_CONNECTION) - len <= 1) {
+    }
 
-                }
-                break;
-            }
-            }
-            newPos++;
-            oldPos = newPos;
-            newPos = strchr(newPos, '\r');
-            i += 2;
-        }
-        */
+    void clear() {
+        if (uri != NULL) free(uri);
+        if (method != NULL) free(method);
+        if (uriString != NULL) free(uriString);
+        if (protocol != NULL) free(protocol);
+
+        keepAlive = false;
+        isValid = true;
+        uri = NULL;
+        protocol = NULL;
+        method = NULL;
+        uriString = NULL;
 
     }
 
@@ -295,7 +292,6 @@ struct RequestData {
         if (method != NULL) free(method);
         if (uriString != NULL) free(uriString);
         if (protocol != NULL) free(protocol);
-        //if (headers != NULL) free(headers);
 
     }
 };
@@ -305,12 +301,12 @@ struct ResponseData {
     RequestData * request;
     char * header;
     char * data;
+    int countHeaderSendedBytes;
+    int countDataSendedBytes;
     int headerLen;
     int dataLen;
 
     void getHTTPResponse() {
-
-        header = (char*)malloc(MAX_RESPONSE_HEADER_LEN);
         data = NULL;
         headerLen = 0;
         dataLen = 0;
@@ -407,10 +403,19 @@ struct ResponseData {
     }
 
     ResponseData(RequestData * request) {
+        countHeaderSendedBytes = 0;
+        countDataSendedBytes = 0;
         this->request = request;
+        header = (char*)malloc(MAX_RESPONSE_HEADER_LEN);
         getHTTPResponse();
 
     }
+
+    void clear() {
+        countHeaderSendedBytes = 0;
+        countDataSendedBytes = 0;
+    }
+
     ~ResponseData(){
         if (header != NULL) free(header);
         if (data != NULL) free(data);
